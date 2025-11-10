@@ -67,6 +67,7 @@ class MainActivity : ComponentActivity() {
             serviceBound = true
             currentMode = prioritySeatService?.getUserMode() ?: PrioritySeatService.UserMode.AVAILABLE
             isMockMode = prioritySeatService?.isMockMode() ?: false
+            Log.d("MainActivity", "Service connected. isMockMode = $isMockMode, currentMode = $currentMode")
         }
 
         override fun onServiceDisconnected(name: ComponentName?) {
@@ -233,53 +234,135 @@ fun MainScreen(
     onPointsAnimationShown: () -> Unit
 ) {
     var selectedTab by remember { mutableStateOf(0) }
+    var hasEnteredApp by remember { mutableStateOf(false) }
 
-    Scaffold(
-        bottomBar = {
-            NavigationBar {
-                NavigationBarItem(
-                    icon = { Icon(Icons.Default.Home, contentDescription = "ホーム") },
-                    label = { Text("ホーム") },
-                    selected = selectedTab == 0,
-                    onClick = { selectedTab = 0 }
+    // NFCタッチ待機画面を表示
+    if (!hasEnteredApp) {
+        NFCWelcomeScreen(
+            onNFCTapped = { hasEnteredApp = true }
+        )
+    } else {
+        // メイン画面
+        Scaffold(
+            bottomBar = {
+                NavigationBar {
+                    NavigationBarItem(
+                        icon = { Icon(Icons.Default.Home, contentDescription = "ホーム") },
+                        label = { Text("ホーム") },
+                        selected = selectedTab == 0,
+                        onClick = { selectedTab = 0 }
+                    )
+                    NavigationBarItem(
+                        icon = { Icon(Icons.Default.Info, contentDescription = "統計") },
+                        label = { Text("統計") },
+                        selected = selectedTab == 1,
+                        onClick = { selectedTab = 1 }
+                    )
+                    NavigationBarItem(
+                        icon = { Icon(Icons.Default.Settings, contentDescription = "設定") },
+                        label = { Text("設定") },
+                        selected = selectedTab == 2,
+                        onClick = { selectedTab = 2 }
+                    )
+                }
+            }
+        ) { paddingValues ->
+            when (selectedTab) {
+                0 -> PrioritySeatScreen(
+                    modifier = Modifier.padding(paddingValues),
+                    currentMode = currentMode,
+                    showAlert = showAlert,
+                    alertMessage = alertMessage,
+                    isMockMode = isMockMode,
+                    transferManager = transferManager,
+                    showPointsAnimationFlag = showPointsAnimationFlag,
+                    onModeChange = onModeChange,
+                    onAlertDismiss = onAlertDismiss,
+                    onTestNotification = onTestNotification,
+                    onPointsAnimationShown = onPointsAnimationShown
                 )
-                NavigationBarItem(
-                    icon = { Icon(Icons.Default.Info, contentDescription = "統計") },
-                    label = { Text("統計") },
-                    selected = selectedTab == 1,
-                    onClick = { selectedTab = 1 }
+                1 -> StatisticsScreen(
+                    modifier = Modifier.padding(paddingValues),
+                    transferManager = transferManager
                 )
-                NavigationBarItem(
-                    icon = { Icon(Icons.Default.Settings, contentDescription = "設定") },
-                    label = { Text("設定") },
-                    selected = selectedTab == 2,
-                    onClick = { selectedTab = 2 }
+                2 -> SettingsScreen(
+                    modifier = Modifier.padding(paddingValues),
+                    settingsManager = settingsManager
                 )
             }
         }
-    ) { paddingValues ->
-        when (selectedTab) {
-            0 -> PrioritySeatScreen(
-                modifier = Modifier.padding(paddingValues),
-                currentMode = currentMode,
-                showAlert = showAlert,
-                alertMessage = alertMessage,
-                isMockMode = isMockMode,
-                transferManager = transferManager,
-                showPointsAnimationFlag = showPointsAnimationFlag,
-                onModeChange = onModeChange,
-                onAlertDismiss = onAlertDismiss,
-                onTestNotification = onTestNotification,
-                onPointsAnimationShown = onPointsAnimationShown
+    }
+}
+
+@Composable
+fun NFCWelcomeScreen(
+    onNFCTapped: () -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(48.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            // NFCアイコン
+            Text(
+                text = "🏷️",
+                fontSize = 120.sp
             )
-            1 -> StatisticsScreen(
-                modifier = Modifier.padding(paddingValues),
-                transferManager = transferManager
+
+            Spacer(modifier = Modifier.height(32.dp))
+
+            Text(
+                text = "優先席アシスト",
+                fontSize = 32.sp,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary
             )
-            2 -> SettingsScreen(
-                modifier = Modifier.padding(paddingValues),
-                settingsManager = settingsManager
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            Text(
+                text = "優先席のNFCタグに\nスマートフォンをタッチしてください",
+                fontSize = 18.sp,
+                textAlign = TextAlign.Center,
+                color = Color.Gray,
+                lineHeight = 28.sp
             )
+
+            Spacer(modifier = Modifier.height(48.dp))
+
+            // NFCタッチボタン（シミュレーション用）
+            Button(
+                onClick = onNFCTapped,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(80.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = Color(0xFFFF9800)
+                ),
+                shape = RoundedCornerShape(16.dp)
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        text = "📱 NFCタッチ",
+                        fontSize = 24.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = "タップしてシミュレート",
+                        fontSize = 12.sp
+                    )
+                }
+            }
         }
     }
 }
@@ -299,7 +382,9 @@ fun PrioritySeatScreen(
     onPointsAnimationShown: () -> Unit
 ) {
     val scope = rememberCoroutineScope()
+    val context = androidx.compose.ui.platform.LocalContext.current
     var showPointsAnimation by remember { mutableStateOf(false) }
+    var showReceiverTestDialog by remember { mutableStateOf(false) }
 
     // ポイントアニメーションフラグを監視
     LaunchedEffect(showPointsAnimationFlag) {
@@ -319,41 +404,6 @@ fun PrioritySeatScreen(
                 .padding(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // モックモード表示
-            if (isMockMode) {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(
-                        containerColor = Color(0xFFFFA500).copy(alpha = 0.2f)
-                    )
-                ) {
-                    Row(
-                        modifier = Modifier.padding(12.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = "🧪",
-                            fontSize = 24.sp
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Column {
-                            Text(
-                                text = "テストモード",
-                                fontSize = 14.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = Color(0xFFFF8C00)
-                            )
-                            Text(
-                                text = "エミュレータで動作中",
-                                fontSize = 12.sp,
-                                color = Color.Gray
-                            )
-                        }
-                    }
-                }
-                Spacer(modifier = Modifier.height(16.dp))
-            }
-
             Text(
                 text = "優先席アシスト",
                 fontSize = 32.sp,
@@ -421,6 +471,69 @@ fun PrioritySeatScreen(
                     )
                 }
             }
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            // 譲ってもらったボタン（席を譲ってほしいモード時のみ）
+            if (currentMode == PrioritySeatService.UserMode.NEED_SEAT) {
+                Spacer(modifier = Modifier.height(12.dp))
+                Button(
+                    onClick = { showReceiverTestDialog = true },
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFF4ECDC4)
+                    )
+                ) {
+                    Text("🎁 譲ってもらった", fontSize = 16.sp)
+                }
+            }
+        }
+
+        // 譲ってもらったテスト確認ダイアログ
+        if (showReceiverTestDialog) {
+            AlertDialog(
+                onDismissRequest = { showReceiverTestDialog = false },
+                title = {
+                    Text(
+                        text = "席を譲っていただきましたか？",
+                        fontWeight = FontWeight.Bold
+                    )
+                },
+                text = {
+                    Column {
+                        Text(text = "近くの方が席を譲ってくれました。")
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = "確認すると相手にポイントが付与されます。",
+                            fontSize = 12.sp,
+                            color = Color.Gray
+                        )
+                    }
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            showReceiverTestDialog = false
+                            // 確認メッセージを表示
+                            android.widget.Toast.makeText(
+                                context,
+                                "ありがとうございます！相手にポイントが付与されました",
+                                android.widget.Toast.LENGTH_SHORT
+                            ).show()
+                        },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFF4ECDC4)
+                        )
+                    ) {
+                        Text("はい、譲っていただきました")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showReceiverTestDialog = false }) {
+                        Text("いいえ")
+                    }
+                }
+            )
         }
 
         // アラート表示（BLE検出通知）
@@ -1048,6 +1161,9 @@ class SettingsManager(context: Context) {
     private val _userType = MutableStateFlow(prefs.getString("user_type", "妊婦") ?: "妊婦")
     val userType: StateFlow<String> = _userType
 
+    private val _forceMockMode = MutableStateFlow(prefs.getBoolean("force_mock_mode", true))
+    val forceMockMode: StateFlow<Boolean> = _forceMockMode
+
     fun setDefaultMode(mode: PrioritySeatService.UserMode) {
         _defaultMode.value = mode
         prefs.edit().putString("default_mode", mode.name).apply()
@@ -1061,5 +1177,10 @@ class SettingsManager(context: Context) {
     fun setUserType(type: String) {
         _userType.value = type
         prefs.edit().putString("user_type", type).apply()
+    }
+
+    fun setForceMockMode(enabled: Boolean) {
+        _forceMockMode.value = enabled
+        prefs.edit().putBoolean("force_mock_mode", enabled).apply()
     }
 }
