@@ -1161,7 +1161,7 @@ class SettingsManager(context: Context) {
     private val _userType = MutableStateFlow(prefs.getString("user_type", "妊婦") ?: "妊婦")
     val userType: StateFlow<String> = _userType
 
-    private val _forceMockMode = MutableStateFlow(prefs.getBoolean("force_mock_mode", true))
+    private val _forceMockMode = MutableStateFlow(prefs.getBoolean("force_mock_mode", false))
     val forceMockMode: StateFlow<Boolean> = _forceMockMode
 
     fun setDefaultMode(mode: PrioritySeatService.UserMode) {

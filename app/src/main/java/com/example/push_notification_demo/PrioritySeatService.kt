@@ -61,7 +61,7 @@ class PrioritySeatService : Service() {
         try {
             // 設定からモックモード強制フラグを読み込む
             val prefs = getSharedPreferences("app_settings", Context.MODE_PRIVATE)
-            val forceMockMode = prefs.getBoolean("force_mock_mode", true)
+            val forceMockMode = prefs.getBoolean("force_mock_mode", false)
 
             if (forceMockMode) {
                 useMockBle = true
