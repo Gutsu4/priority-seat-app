@@ -38,21 +38,9 @@ class PrioritySeatService : Service() {
         private const val ALERT_CHANNEL_ID = "PrioritySeatAlertChannel"
         private const val NOTIFICATION_ID = 1
         const val ACTION_FOUND_NEED_SEAT = "com.example.push_notification_demo.FOUND_NEED_SEAT"
-        const val ACTION_TRANSFER_REQUEST = "com.example.push_notification_demo.TRANSFER_REQUEST"
-        const val ACTION_TRANSFER_CONFIRM = "com.example.push_notification_demo.TRANSFER_CONFIRM"
-
-        const val EXTRA_TRANSFER_ID = "transfer_id"
-        const val EXTRA_SENDER_DEVICE = "sender_device"
-        const val EXTRA_RECEIVER_TYPE = "receiver_type"
-        const val EXTRA_CONFIRMED = "confirmed"
 
         // BLE用の独自UUID
         private const val PRIORITY_SEAT_UUID = "0000FFF0-0000-1000-8000-00805F9B34FB"
-        private const val TRANSFER_REQUEST_UUID = "0000FFF1-0000-1000-8000-00805F9B34FB"
-        private const val TRANSFER_CONFIRM_UUID = "0000FFF2-0000-1000-8000-00805F9B34FB"
-
-        // BLE ManufacturerデータのID
-        private const val MANUFACTURER_ID = 0xFFFF
     }
 
     inner class LocalBinder : Binder() {
@@ -71,11 +59,15 @@ class PrioritySeatService : Service() {
             val bluetoothManager = getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
             bluetoothLeScanner = bluetoothManager?.adapter?.bluetoothLeScanner
 
+            // MockBleManagerは常に初期化（テスト機能用）
+            mockBleManager = MockBleManager(this)
+
             // BLEが使えない場合はモックモードを使用
             useMockBle = bluetoothLeScanner == null
             if (useMockBle) {
-                mockBleManager = MockBleManager(this)
                 Log.d(TAG, "モックBLEモードで動作します(エミュレータ用)")
+            } else {
+                Log.d(TAG, "実BLEモードで動作します（テスト機能も利用可能）")
             }
         } catch (e: Exception) {
             Log.e(TAG, "Bluetooth initialization failed, using mock mode", e)
@@ -196,30 +188,10 @@ class PrioritySeatService : Service() {
             result?.let {
                 val scanRecord = it.scanRecord
                 scanRecord?.serviceUuids?.forEach { uuid ->
-                    when {
-                        // 譲ってほしい人のアドバタイズを検出
-                        uuid.toString().equals(PRIORITY_SEAT_UUID, ignoreCase = true) -> {
-                            Log.d(TAG, "席を譲ってほしい人を検出しました!")
-                            onNeedSeatDetected(it.device.address)
-                        }
-                        // 譲渡リクエストを検出
-                        uuid.toString().equals(TRANSFER_REQUEST_UUID, ignoreCase = true) -> {
-                            scanRecord.manufacturerSpecificData?.get(MANUFACTURER_ID)?.let { data ->
-                                decodeTransferData(data)?.let { (transferId, receiverType) ->
-                                    Log.d(TAG, "TransferRequestを受信: $transferId")
-                                    onTransferRequestReceived(transferId, it.device.address, receiverType)
-                                }
-                            }
-                        }
-                        // 譲渡確認を検出
-                        uuid.toString().equals(TRANSFER_CONFIRM_UUID, ignoreCase = true) -> {
-                            scanRecord.manufacturerSpecificData?.get(MANUFACTURER_ID)?.let { data ->
-                                decodeTransferData(data)?.let { (transferId, status) ->
-                                    Log.d(TAG, "TransferConfirmationを受信: $transferId ($status)")
-                                    onTransferConfirmationReceived(transferId, status == "confirmed")
-                                }
-                            }
-                        }
+                    // 譲ってほしい人のアドバタイズを検出
+                    if (uuid.toString().equals(PRIORITY_SEAT_UUID, ignoreCase = true)) {
+                        Log.d(TAG, "席を譲ってほしい人を検出しました!")
+                        onNeedSeatDetected(it.device.address)
                     }
                 }
             }
@@ -355,31 +327,6 @@ class PrioritySeatService : Service() {
         sendBroadcast(intent)
     }
 
-    /**
-     * 譲渡リクエストを受信した時の処理
-     */
-    private fun onTransferRequestReceived(transferId: String, senderDevice: String, receiverType: String) {
-        // アプリ内ブロードキャストで通知
-        val intent = Intent(ACTION_TRANSFER_REQUEST).apply {
-            putExtra(EXTRA_TRANSFER_ID, transferId)
-            putExtra(EXTRA_SENDER_DEVICE, senderDevice)
-            putExtra(EXTRA_RECEIVER_TYPE, receiverType)
-        }
-        sendBroadcast(intent)
-    }
-
-    /**
-     * 譲渡確認を受信した時の処理
-     */
-    private fun onTransferConfirmationReceived(transferId: String, confirmed: Boolean) {
-        // アプリ内ブロードキャストで通知
-        val intent = Intent(ACTION_TRANSFER_CONFIRM).apply {
-            putExtra(EXTRA_TRANSFER_ID, transferId)
-            putExtra(EXTRA_CONFIRMED, confirmed)
-        }
-        sendBroadcast(intent)
-    }
-
     private fun sendNotification(title: String, message: String) {
         val notificationIntent = Intent(this, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
@@ -435,119 +382,4 @@ class PrioritySeatService : Service() {
     }
 
     fun isMockMode(): Boolean = useMockBle
-
-    /**
-     * 譲渡リクエストをBLEで送信
-     */
-    fun sendTransferRequest(receiverDeviceId: String, receiverType: String, transferId: String) {
-        Log.d(TAG, "★★★ sendTransferRequest呼び出し: transferId=$transferId, useMockBle=$useMockBle")
-        if (useMockBle) {
-            // モックモード: ブロードキャストで送信（テスト用）
-            Log.d(TAG, "★★★ モックモードでTransferRequest送信開始")
-
-            // テスト用デバイスIDの場合、テストメソッドを呼び出し
-            if (receiverDeviceId == "test_device") {
-                mockBleManager?.sendTestTransferRequest(transferId, receiverType)
-            } else {
-                mockBleManager?.sendTransferRequest(transferId, receiverType)
-            }
-            Log.d(TAG, "★★★ モックモードでTransferRequest送信完了")
-            return
-        }
-
-        // BLE Advertisingでtransfer情報を送信
-        startTransferAdvertising(transferId, receiverType, isConfirm = false)
-        Log.d(TAG, "TransferRequestをBLEで送信: $transferId -> $receiverDeviceId")
-    }
-
-    /**
-     * 譲渡確認結果をBLEで送信
-     */
-    fun sendTransferConfirmation(transferId: String, confirmed: Boolean) {
-        if (useMockBle) {
-            // モックモード: ブロードキャストで送信（テスト用）
-            mockBleManager?.sendTransferConfirmation(transferId, confirmed)
-            return
-        }
-
-        // BLE Advertisingで確認結果を送信
-        startTransferAdvertising(transferId, if (confirmed) "confirmed" else "rejected", isConfirm = true)
-        Log.d(TAG, "TransferConfirmationをBLEで送信: $transferId (confirmed=$confirmed)")
-    }
-
-    /**
-     * Transfer情報を含むBLE Advertisingを開始
-     */
-    private fun startTransferAdvertising(transferId: String, data: String, isConfirm: Boolean) {
-        if (useMockBle) return
-
-        try {
-            val bluetoothManager = getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
-            val tempAdvertiser = bluetoothManager.adapter?.bluetoothLeAdvertiser
-
-            val settings = AdvertiseSettings.Builder()
-                .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY)
-                .setConnectable(false)
-                .setTimeout(3000) // 3秒間送信
-                .setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_HIGH)
-                .build()
-
-            // Transfer情報をManufacturerDataとして送信
-            val transferData = encodeTransferData(transferId, data)
-            val uuid = if (isConfirm) TRANSFER_CONFIRM_UUID else TRANSFER_REQUEST_UUID
-
-            val advertiseData = AdvertiseData.Builder()
-                .setIncludeDeviceName(false)
-                .addServiceUuid(android.os.ParcelUuid.fromString(uuid))
-                .addManufacturerData(MANUFACTURER_ID, transferData)
-                .build()
-
-            val tempCallback = object : AdvertiseCallback() {
-                override fun onStartSuccess(settingsInEffect: AdvertiseSettings?) {
-                    Log.d(TAG, "Transfer Advertising started: $transferId")
-                }
-
-                override fun onStartFailure(errorCode: Int) {
-                    Log.e(TAG, "Transfer Advertising failed: $errorCode")
-                }
-            }
-
-            tempAdvertiser?.startAdvertising(settings, advertiseData, tempCallback)
-        } catch (e: SecurityException) {
-            Log.e(TAG, "Permission denied for transfer advertising", e)
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to start transfer advertising", e)
-        }
-    }
-
-    /**
-     * Transfer情報をバイト配列にエンコード
-     */
-    private fun encodeTransferData(transferId: String, data: String): ByteArray {
-        // フォーマット: [transferId(16bytes)][dataLength(1byte)][data(variable)]
-        val transferIdBytes = transferId.take(16).padEnd(16, ' ').toByteArray()
-        val dataBytes = data.toByteArray()
-        val dataLength = dataBytes.size.toByte()
-
-        return transferIdBytes + dataLength + dataBytes
-    }
-
-    /**
-     * バイト配列からTransfer情報をデコード
-     */
-    private fun decodeTransferData(data: ByteArray): Pair<String, String>? {
-        if (data.size < 17) return null
-
-        try {
-            val transferId = String(data.sliceArray(0..15)).trim()
-            val dataLength = data[16].toInt()
-            if (data.size < 17 + dataLength) return null
-
-            val dataStr = String(data.sliceArray(17 until 17 + dataLength))
-            return Pair(transferId, dataStr)
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to decode transfer data", e)
-            return null
-        }
-    }
 }

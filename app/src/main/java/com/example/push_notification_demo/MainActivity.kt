@@ -53,6 +53,7 @@ class MainActivity : ComponentActivity() {
     private var showAlert by mutableStateOf(false)
     private var alertMessage by mutableStateOf("")
     private var isMockMode by mutableStateOf(false)
+    private var showPointsAnimationFlag by mutableStateOf(false)
 
     // TransferManager
     private lateinit var transferManager: TransferManager
@@ -77,49 +78,10 @@ class MainActivity : ComponentActivity() {
     private val needSeatReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             if (intent?.action == PrioritySeatService.ACTION_FOUND_NEED_SEAT) {
-                showAlert = true
-                alertMessage = "近くに席を必要としている方がいます"
-            }
-        }
-    }
-
-    private val transferRequestReceiver = object : BroadcastReceiver() {
-        override fun onReceive(context: Context?, intent: Intent?) {
-            Log.d("MainActivity", "★★★ transferRequestReceiver.onReceive呼び出し")
-            if (intent?.action == PrioritySeatService.ACTION_TRANSFER_REQUEST) {
-                val transferId = intent.getStringExtra(PrioritySeatService.EXTRA_TRANSFER_ID) ?: return
-                val senderDevice = intent.getStringExtra(PrioritySeatService.EXTRA_SENDER_DEVICE) ?: return
-                val receiverType = intent.getStringExtra(PrioritySeatService.EXTRA_RECEIVER_TYPE) ?: return
-
-                Log.d("MainActivity", "★★★ TransferRequestを受信: $transferId (sender=$senderDevice)")
-
-                // 譲渡リクエストを受信（譲られる側）
-                // 注意: MockBleManagerで自分が送信したものは既にフィルタ済み
-                val request = TransferRequest(
-                    id = transferId,
-                    senderDeviceId = senderDevice,
-                    receiverDeviceId = "receiver",
-                    receiverType = receiverType,
-                    status = TransferStatus.PENDING,
-                    timestamp = System.currentTimeMillis()
-                )
-                transferManager.receiveTransferRequest(request)
-                Log.d("MainActivity", "★★★ TransferRequestをTransferManagerに追加: $transferId")
-            }
-        }
-    }
-
-    private val transferConfirmReceiver = object : BroadcastReceiver() {
-        override fun onReceive(context: Context?, intent: Intent?) {
-            if (intent?.action == PrioritySeatService.ACTION_TRANSFER_CONFIRM) {
-                val transferId = intent.getStringExtra(PrioritySeatService.EXTRA_TRANSFER_ID) ?: return
-                val confirmed = intent.getBooleanExtra(PrioritySeatService.EXTRA_CONFIRMED, false)
-
-                Log.d("MainActivity", "TransferConfirmationを受信: $transferId (confirmed=$confirmed)")
-
-                if (confirmed) {
-                    // 譲った側もポイントを獲得
-                    transferManager.completeTransfer(transferId)
+                // 通知設定を確認
+                if (settingsManager.enableNotifications.value) {
+                    showAlert = true
+                    alertMessage = "近くに席を必要としている方がいます"
                 }
             }
         }
@@ -146,20 +108,17 @@ class MainActivity : ComponentActivity() {
         // SettingsManagerを初期化
         settingsManager = SettingsManager(this)
 
+        // 設定からデフォルトモードを適用
+        currentMode = settingsManager.defaultMode.value
+
         // ブロードキャストレシーバーを登録
         try {
             val needSeatFilter = IntentFilter(PrioritySeatService.ACTION_FOUND_NEED_SEAT)
-            val transferRequestFilter = IntentFilter(PrioritySeatService.ACTION_TRANSFER_REQUEST)
-            val transferConfirmFilter = IntentFilter(PrioritySeatService.ACTION_TRANSFER_CONFIRM)
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 registerReceiver(needSeatReceiver, needSeatFilter, RECEIVER_NOT_EXPORTED)
-                registerReceiver(transferRequestReceiver, transferRequestFilter, RECEIVER_NOT_EXPORTED)
-                registerReceiver(transferConfirmReceiver, transferConfirmFilter, RECEIVER_NOT_EXPORTED)
             } else {
                 registerReceiver(needSeatReceiver, needSeatFilter)
-                registerReceiver(transferRequestReceiver, transferRequestFilter)
-                registerReceiver(transferConfirmReceiver, transferConfirmFilter)
             }
         } catch (e: Exception) {
             Log.e("MainActivity", "Failed to register receiver", e)
@@ -174,6 +133,7 @@ class MainActivity : ComponentActivity() {
                     isMockMode = isMockMode,
                     transferManager = transferManager,
                     settingsManager = settingsManager,
+                    showPointsAnimationFlag = showPointsAnimationFlag,
                     onModeChange = { mode ->
                         currentMode = mode
                         prioritySeatService?.setUserMode(mode)
@@ -186,11 +146,8 @@ class MainActivity : ComponentActivity() {
                             sendBroadcast(testIntent)
                         }
                     },
-                    onSendTransferRequest = { receiverDeviceId, receiverType, transferId ->
-                        prioritySeatService?.sendTransferRequest(receiverDeviceId, receiverType, transferId)
-                    },
-                    onSendTransferConfirm = { transferId, confirmed ->
-                        prioritySeatService?.sendTransferConfirmation(transferId, confirmed)
+                    onPointsAnimationShown = {
+                        showPointsAnimationFlag = false
                     }
                 )
             }
@@ -255,8 +212,6 @@ class MainActivity : ComponentActivity() {
                 serviceBound = false
             }
             unregisterReceiver(needSeatReceiver)
-            unregisterReceiver(transferRequestReceiver)
-            unregisterReceiver(transferConfirmReceiver)
         } catch (e: Exception) {
             Log.e("MainActivity", "Error during cleanup", e)
         }
@@ -271,11 +226,11 @@ fun MainScreen(
     isMockMode: Boolean,
     transferManager: TransferManager,
     settingsManager: SettingsManager,
+    showPointsAnimationFlag: Boolean,
     onModeChange: (PrioritySeatService.UserMode) -> Unit,
     onAlertDismiss: () -> Unit,
     onTestNotification: () -> Unit,
-    onSendTransferRequest: (String, String, String) -> Unit,
-    onSendTransferConfirm: (String, Boolean) -> Unit
+    onPointsAnimationShown: () -> Unit
 ) {
     var selectedTab by remember { mutableStateOf(0) }
 
@@ -311,11 +266,11 @@ fun MainScreen(
                 alertMessage = alertMessage,
                 isMockMode = isMockMode,
                 transferManager = transferManager,
+                showPointsAnimationFlag = showPointsAnimationFlag,
                 onModeChange = onModeChange,
                 onAlertDismiss = onAlertDismiss,
                 onTestNotification = onTestNotification,
-                onSendTransferRequest = onSendTransferRequest,
-                onSendTransferConfirm = onSendTransferConfirm
+                onPointsAnimationShown = onPointsAnimationShown
             )
             1 -> StatisticsScreen(
                 modifier = Modifier.padding(paddingValues),
@@ -337,33 +292,22 @@ fun PrioritySeatScreen(
     alertMessage: String,
     isMockMode: Boolean,
     transferManager: TransferManager,
+    showPointsAnimationFlag: Boolean,
     onModeChange: (PrioritySeatService.UserMode) -> Unit,
     onAlertDismiss: () -> Unit,
     onTestNotification: () -> Unit = {},
-    onSendTransferRequest: (String, String, String) -> Unit,
-    onSendTransferConfirm: (String, Boolean) -> Unit
+    onPointsAnimationShown: () -> Unit
 ) {
     val scope = rememberCoroutineScope()
-    val pendingTransfers by transferManager.pendingTransfers.collectAsState()
-    val thankYouMessages by transferManager.thankYouMessages.collectAsState()
-    var showThankYou by remember { mutableStateOf(false) }
     var showPointsAnimation by remember { mutableStateOf(false) }
 
-    // 感謝メッセージを受信したらアニメーション表示
-    LaunchedEffect(thankYouMessages.size) {
-        if (thankYouMessages.isNotEmpty()) {
-            showThankYou = true
-            delay(3000)
-            showThankYou = false
-            transferManager.clearThankYouMessages()
-        }
-    }
-
-    // タイムアウトチェック
-    LaunchedEffect(Unit) {
-        while (true) {
-            delay(1000)
-            transferManager.checkTimeouts()
+    // ポイントアニメーションフラグを監視
+    LaunchedEffect(showPointsAnimationFlag) {
+        if (showPointsAnimationFlag) {
+            showPointsAnimation = true
+            delay(2000)
+            showPointsAnimation = false
+            onPointsAnimationShown()
         }
     }
 
@@ -450,38 +394,6 @@ fun PrioritySeatScreen(
 
             Spacer(modifier = Modifier.height(24.dp))
 
-            // テストボタン
-            if (isMockMode) {
-                Button(
-                    onClick = onTestNotification,
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = Color(0xFFFFA500)
-                    )
-                ) {
-                    Text("🔔 テスト通知を送信", fontSize = 16.sp, fontWeight = FontWeight.Bold)
-                }
-
-                Spacer(modifier = Modifier.height(8.dp))
-
-                Button(
-                    onClick = {
-                        // テスト用：譲渡リクエストを直接送信
-                        val testTransferId = java.util.UUID.randomUUID().toString()
-                        onSendTransferRequest("test_device", "テストユーザー", testTransferId)
-                        Log.d("MainActivity", "★★★ テスト譲渡リクエスト送信: $testTransferId")
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = Color(0xFF4ECDC4)
-                    )
-                ) {
-                    Text("🎁 譲ってもらったテスト", fontSize = 16.sp, fontWeight = FontWeight.Bold)
-                }
-            }
-
-            Spacer(modifier = Modifier.height(24.dp))
-
             // 現在のステータス表示
             Card(
                 modifier = Modifier.fillMaxWidth(),
@@ -528,11 +440,16 @@ fun PrioritySeatScreen(
                     Button(
                         onClick = {
                             onAlertDismiss()
-                            // 譲渡を開始 - ブロードキャスト送信のみ（自分のpendingTransfersには追加しない）
+                            // 席を譲るボタンを押した時点でポイント付与
                             if (currentMode == PrioritySeatService.UserMode.AVAILABLE) {
-                                val transferId = java.util.UUID.randomUUID().toString()
-                                // TransferRequestをブロードキャストで送信（相手のデバイスに送る）
-                                onSendTransferRequest("detected_user", "席を必要としている方", transferId)
+                                scope.launch {
+                                    // ポイント付与
+                                    transferManager.addPoints(50)
+                                    // ポイントアニメーション表示
+                                    showPointsAnimation = true
+                                    delay(2000)
+                                    showPointsAnimation = false
+                                }
                             }
                         }
                     ) {
@@ -545,69 +462,6 @@ fun PrioritySeatScreen(
                     }
                 }
             )
-        }
-
-        // 譲渡確認ダイアログ（譲られた側）
-        android.util.Log.d("UI", "★★★ pendingTransfers数: ${pendingTransfers.size}")
-        pendingTransfers.forEach { transfer ->
-            android.util.Log.d("UI", "★★★ Transfer表示チェック: ID=${transfer.id}, status=${transfer.status}")
-            if (transfer.status == TransferStatus.PENDING) {
-                android.util.Log.d("UI", "★★★ TransferConfirmationDialog表示: ${transfer.id}")
-                TransferConfirmationDialog(
-                    transfer = transfer,
-                    onConfirm = {
-                        transferManager.confirmTransfer(transfer.id, true)
-                        // 確認結果をブロードキャストで送信
-                        onSendTransferConfirm(transfer.id, true)
-                        scope.launch {
-                            delay(500)
-                            transferManager.completeTransfer(transfer.id)
-                            showPointsAnimation = true
-                            delay(2000)
-                            showPointsAnimation = false
-                        }
-                    },
-                    onDismiss = {
-                        transferManager.confirmTransfer(transfer.id, false)
-                        // 拒否もブロードキャストで送信
-                        onSendTransferConfirm(transfer.id, false)
-                    }
-                )
-            }
-        }
-
-        // 感謝メッセージアニメーション
-        AnimatedVisibility(
-            visible = showThankYou,
-            enter = slideInVertically() + fadeIn(),
-            exit = slideOutVertically() + fadeOut()
-        ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.7f)),
-                contentAlignment = Alignment.Center
-            ) {
-                Card(
-                    modifier = Modifier.padding(32.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = Color.White
-                    )
-                ) {
-                    Column(
-                        modifier = Modifier.padding(32.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        Text("💝", fontSize = 64.sp)
-                        Spacer(modifier = Modifier.height(16.dp))
-                        Text(
-                            text = "ありがとうございます！",
-                            fontSize = 24.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-                }
-            }
         }
 
         // ポイント獲得アニメーション
@@ -684,49 +538,6 @@ fun ModeButton(
     }
 }
 
-@Composable
-fun TransferConfirmationDialog(
-    transfer: TransferRequest,
-    onConfirm: () -> Unit,
-    onDismiss: () -> Unit
-) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = {
-            Text(
-                text = "席を譲っていただきましたか？",
-                fontWeight = FontWeight.Bold
-            )
-        },
-        text = {
-            Column {
-                Text(text = "${transfer.receiverType}の方から譲渡の申し出がありました。")
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(
-                    text = "確認いただくとお互いにポイントが付与されます。",
-                    fontSize = 12.sp,
-                    color = Color.Gray
-                )
-            }
-        },
-        confirmButton = {
-            Button(
-                onClick = onConfirm,
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = Color(0xFF4ECDC4)
-                )
-            ) {
-                Text("はい、譲っていただきました")
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("いいえ")
-            }
-        }
-    )
-}
-
 // 統計画面
 @Composable
 fun StatisticsScreen(
@@ -800,7 +611,7 @@ fun StatisticsScreen(
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Text(
-                    text = "今月助けた人数",
+                    text = "累計助けた人数",
                     fontSize = 16.sp,
                     color = Color.Gray
                 )
@@ -830,7 +641,8 @@ fun StatisticsScreen(
             title = "駅ナカカフェ 50円引き",
             points = 300,
             icon = "☕",
-            enabled = points >= 300
+            enabled = points >= 300,
+            transferManager = transferManager
         )
 
         Spacer(modifier = Modifier.height(12.dp))
@@ -839,7 +651,8 @@ fun StatisticsScreen(
             title = "交通系IC 100円チャージ",
             points = 500,
             icon = "🚃",
-            enabled = points >= 500
+            enabled = points >= 500,
+            transferManager = transferManager
         )
 
         Spacer(modifier = Modifier.height(12.dp))
@@ -848,7 +661,8 @@ fun StatisticsScreen(
             title = "慈善団体へ寄付",
             points = 1000,
             icon = "❤️",
-            enabled = points >= 1000
+            enabled = points >= 1000,
+            transferManager = transferManager
         )
     }
 }
@@ -858,8 +672,13 @@ fun PointExchangeCard(
     title: String,
     points: Int,
     icon: String,
-    enabled: Boolean
+    enabled: Boolean,
+    transferManager: TransferManager
 ) {
+    var showConfirmDialog by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    val context = androidx.compose.ui.platform.LocalContext.current
+
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
@@ -892,7 +711,7 @@ fun PointExchangeCard(
             }
             if (enabled) {
                 Button(
-                    onClick = { /* TODO: 交換処理 */ },
+                    onClick = { showConfirmDialog = true },
                     modifier = Modifier.height(40.dp)
                 ) {
                     Text("交換")
@@ -905,6 +724,37 @@ fun PointExchangeCard(
                 )
             }
         }
+    }
+
+    if (showConfirmDialog) {
+        AlertDialog(
+            onDismissRequest = { showConfirmDialog = false },
+            title = { Text("ポイント交換") },
+            text = { Text("$points ポイントを使って「$title」と交換しますか？") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        scope.launch {
+                            if (transferManager.usePoints(points)) {
+                                android.widget.Toast.makeText(
+                                    context,
+                                    "交換しました！",
+                                    android.widget.Toast.LENGTH_SHORT
+                                ).show()
+                            }
+                        }
+                        showConfirmDialog = false
+                    }
+                ) {
+                    Text("交換する")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showConfirmDialog = false }) {
+                    Text("キャンセル")
+                }
+            }
+        )
     }
 }
 
@@ -922,7 +772,6 @@ fun SettingsScreen(
     settingsManager: SettingsManager
 ) {
     val defaultMode by settingsManager.defaultMode.collectAsState()
-    val autoConfirm by settingsManager.autoConfirm.collectAsState()
     val enableNotifications by settingsManager.enableNotifications.collectAsState()
     val userType by settingsManager.userType.collectAsState()
 
@@ -1040,7 +889,7 @@ fun SettingsScreen(
                     )
                 }
                 Icon(
-                    imageVector = Icons.Default.KeyboardArrowRight,
+                    imageVector = Icons.Default.ArrowForward,
                     contentDescription = "選択",
                     tint = Color.Gray
                 )
@@ -1049,47 +898,12 @@ fun SettingsScreen(
 
         Spacer(modifier = Modifier.height(24.dp))
 
-        // 自動応答設定
+        // 通知設定
         Text(
-            text = "動作設定",
+            text = "通知設定",
             fontSize = 20.sp,
             fontWeight = FontWeight.Bold
         )
-
-        Spacer(modifier = Modifier.height(12.dp))
-
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.surfaceVariant
-            )
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(16.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "譲渡リクエストの自動承認",
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = "5秒後に自動で確認されます",
-                        fontSize = 12.sp,
-                        color = Color.Gray
-                    )
-                }
-                Switch(
-                    checked = autoConfirm,
-                    onCheckedChange = { settingsManager.setAutoConfirm(it) }
-                )
-            }
-        }
 
         Spacer(modifier = Modifier.height(12.dp))
 
@@ -1228,9 +1042,6 @@ class SettingsManager(context: Context) {
     )
     val defaultMode: StateFlow<PrioritySeatService.UserMode> = _defaultMode
 
-    private val _autoConfirm = MutableStateFlow(prefs.getBoolean("auto_confirm", true))
-    val autoConfirm: StateFlow<Boolean> = _autoConfirm
-
     private val _enableNotifications = MutableStateFlow(prefs.getBoolean("enable_notifications", true))
     val enableNotifications: StateFlow<Boolean> = _enableNotifications
 
@@ -1240,11 +1051,6 @@ class SettingsManager(context: Context) {
     fun setDefaultMode(mode: PrioritySeatService.UserMode) {
         _defaultMode.value = mode
         prefs.edit().putString("default_mode", mode.name).apply()
-    }
-
-    fun setAutoConfirm(enabled: Boolean) {
-        _autoConfirm.value = enabled
-        prefs.edit().putBoolean("auto_confirm", enabled).apply()
     }
 
     fun setEnableNotifications(enabled: Boolean) {
