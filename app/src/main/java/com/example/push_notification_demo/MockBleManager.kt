@@ -1,7 +1,6 @@
 package com.example.push_notification_demo
 
 import android.content.Context
-import android.content.Intent
 import android.util.Log
 import kotlinx.coroutines.*
 

@@ -195,8 +195,7 @@ class PrioritySeatService : Service() {
 
         if (mode == UserMode.NEED_SEAT) {
             startAdvertising()
-            // NEED_SEATモードでもスキャンを継続（譲渡リクエストを受信するため）
-            startScanning()
+            stopScanning()
         } else {
             startScanning()
             stopAdvertising()
