@@ -55,52 +55,20 @@ class PrioritySeatService : Service() {
         super.onCreate()
         createNotificationChannel()
 
-        // MockBleManagerは常に初期化（テスト機能用）
-        mockBleManager = MockBleManager(this)
-
         try {
-            // 設定からモックモード強制フラグを読み込む
-            val prefs = getSharedPreferences("app_settings", Context.MODE_PRIVATE)
-            val forceMockMode = prefs.getBoolean("force_mock_mode", false)
+            val bluetoothManager = getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
+            bluetoothLeScanner = bluetoothManager?.adapter?.bluetoothLeScanner
 
-            if (forceMockMode) {
-                useMockBle = true
-                Log.d(TAG, "モックBLEモードで動作します(設定で強制)")
-            } else {
-                val bluetoothManager = getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
-                val adapter = bluetoothManager?.adapter
-                bluetoothLeScanner = adapter?.bluetoothLeScanner
-
-                // エミュレータ判定: Build情報をチェック
-                val isEmulator = Build.PRODUCT.contains("sdk", ignoreCase = true) ||
-                        Build.PRODUCT.contains("emulator", ignoreCase = true) ||
-                        Build.MODEL.contains("Emulator", ignoreCase = true) ||
-                        Build.MODEL.contains("sdk", ignoreCase = true) ||
-                        Build.FINGERPRINT.contains("generic", ignoreCase = true) ||
-                        Build.HARDWARE.contains("ranchu", ignoreCase = true) ||
-                        Build.HARDWARE.contains("goldfish", ignoreCase = true)
-
-                // デバッグ用にビルド情報を出力
-                Log.d(TAG, "Device Info - Product: ${Build.PRODUCT}, Model: ${Build.MODEL}, Hardware: ${Build.HARDWARE}, Fingerprint: ${Build.FINGERPRINT}")
-
-                // エミュレータの場合は常にモックモードを使用
-                useMockBle = isEmulator
-
-                if (useMockBle) {
-                    Log.d(TAG, "モックBLEモードで動作します(エミュレータ検出)")
-                } else {
-                    // 実機の場合、BLEが使えるかチェック
-                    if (bluetoothLeScanner == null || adapter == null) {
-                        useMockBle = true
-                        Log.d(TAG, "モックBLEモードで動作します(BLE利用不可)")
-                    } else {
-                        Log.d(TAG, "実BLEモードで動作します（実機）")
-                    }
-                }
+            // BLEが使えない場合はモックモードを使用
+            useMockBle = bluetoothLeScanner == null
+            if (useMockBle) {
+                mockBleManager = MockBleManager(this)
+                Log.d(TAG, "モックBLEモードで動作します(エミュレータ用)")
             }
         } catch (e: Exception) {
             Log.e(TAG, "Bluetooth initialization failed, using mock mode", e)
             useMockBle = true
+            mockBleManager = MockBleManager(this)
         }
     }
 
